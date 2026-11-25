@@ -31,7 +31,7 @@ def table(o):
     pos={c:i for i,c in enumerate(o)}
     return [[(pos[y]-pos[x])%100 for y in range(100)] for x in range(100)]
 r=np.random.default_rng(7)
-LOOPS=[list(bw.LOOP),list(bw.LOOP)[::-1]]+[rnd_loop(r) for _ in range(126)]
+LOOPS=[list(bw.LOOP),list(bw.LOOP)[::-1]]+[rnd_loop(r) for _ in range(int(os.environ.get("NL","126")))]
 TAB=[table(o) for o in LOOPS]
 NXT=[[next(y for y in NL[x] if t[x][y]==1) for x in range(100)] for t in TAB]
 def v3t(t,nx,h,tl,f,L,B0):

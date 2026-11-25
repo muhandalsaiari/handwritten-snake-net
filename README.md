@@ -53,9 +53,13 @@ Every layer has a written purpose (see `build_v5.py`).
 ## Honest notes
 
 - It only works on a 10×10 board.
-- I haven't compared it head-to-head with trained Snake networks. The strongest one I found
-  ([surt91](https://blog.schawe.me/en/perfect-snake.html)) also plays perfect 10×10 games but
-  doesn't publish win rates or move counts, so I don't claim it's "the best".
+- It is not the fastest Snake AI. Published 10×10 averages, as their authors report them (I haven't
+  rerun them, and rules such as start length differ):
+  - [Nomarcus/SnakeAI](https://github.com/Nomarcus/SnakeAI), Dynamic Loop: about 980 moves, 100% wins (algorithm)
+  - [slitherin](https://github.com/VonAlphaBisZulu/slitherin), Hamilton Cycle: 1092 moves, 100 of 100 wins (algorithm, searches each move)
+  - [AlphaSnake](https://arxiv.org/abs/2211.09622), a trained network (AlphaZero): 944 of 1000 games won within 1200 moves.
+    v5 finishes within 1200 moves in about 35% of games, but won all 2000 in the end.
+- I found no other Snake network with hand-written weights, but I only did a short search.
 - Settings (when to switch, how many loops, gap sizes) were picked by playing many simulated
   games with different values. The loops are random. No weight was trained.
 

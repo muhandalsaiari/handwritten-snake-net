@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hand-written Snake net</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+         gap: 14px; padding: 18px; background: #101418; color: #e8edf2;
+         font: 16px system-ui, sans-serif; }
+  h1 { font-size: 19px; margin: 0; }
+  canvas { width: min(92vw, 60vh, 460px); aspect-ratio: 1; border-radius: 10px; background: #1a2026; }
+  .stats { display: flex; gap: 22px; }
+  .stats b { display: block; font-size: 22px; }
+  .stats span { font-size: 13px; color: #9fb0bf; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  button { font: inherit; padding: 10px 18px; border: 0; border-radius: 8px;
+           background: #3ddc97; color: #0c1a14; font-weight: 600; }
+  label { font-size: 14px; color: #9fb0bf; }
+  #msg { min-height: 22px; font-weight: 600; color: #3ddc97; }
+</style>
+</head>
+<body>
+<h1>Snake net v7: sees the whole body, weights written by hand</h1>
+<canvas id="board" width="600" height="600"></canvas>
+<div class="stats">
+  <div><b id="len">1</b><span>length</span></div>
+  <div><b id="steps">0</b><span>steps</span></div>
+  <div><b id="wins">0</b><span>wins</span></div>
+</div>
+<div id="msg"></div>
+<div class="row">
+  <button id="again">New game</button>
+  <label>Speed <input id="speed" type="range" min="1" max="60" value="12"></label>
+</div>
+<script>
+const N = 10, CELLS = 100;
+const MOVES = [[-1, 0], [0, 1], [1, 0], [0, -1]];
+const META = __META__;
+let LAYERS = [];  // unique layers: {indptr, indices, data, bias, rows}
+
+// Unpack the hand-written weights: sparse int16 layers, each repeated layer
+// stored once; META.order says which layer runs at each depth.
+async function loadWeights() {
+  const gz = Uint8Array.from(atob("__WEIGHTS__"), c => c.charCodeAt(0));
+  const raw = await new Response(new Blob([gz]).stream()
+    .pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+  let at = 0;
+  const take = (Type, n) => {
+    const arr = new Type(raw, at, n);
+    at += n * Type.BYTES_PER_ELEMENT;
+    at = Math.ceil(at / 4) * 4;
+    return arr;
+  };
+  LAYERS = META.layers.map(l => {
+    const len = take(Int16Array, l.rows), indices = take(Int16Array, l.nnz);
+    const data = take(Int16Array, l.nnz), bias = take(Int16Array, l.rows);
+    const indptr = new Int32Array(l.rows + 1);
+    for (let r = 0; r < l.rows; r++) indptr[r + 1] = indptr[r] + len[r];
+    for (let r = 1; r < l.rows; r++) {  // undo the packing (see make_page_v7.py)
+      const p = indptr[r], n = Math.min(len[r], len[r - 1]);
+      for (let k = 0; k < n; k++) indices[p + k] += indices[indptr[r - 1] + k];
+      if (n) for (let k = n; k < len[r]; k++) indices[p + k] += indices[p];
+    }
+    return { rows: l.rows, indptr, indices, data, bias };
+  });
+}
+
+// The real forward pass: 96 ReLU layers. Input: head, food, age of each cell.
+function decide(body, food) {
+  let x = new Float64Array(300);
+  x[body[0]] = 1;
+  x[CELLS + food] = 1;
+  body.forEach((c, i) => { x[2 * CELLS + c] = body.length - i; });
+  for (const li of META.order) {
+    const l = LAYERS[li], y = new Float64Array(l.rows);
+    const { indptr, indices, data, bias } = l;
+    for (let r = 0, k = 0; r < l.rows; r++) {
+      let s = bias[r];
+      for (const end = indptr[r + 1]; k < end; k++) s += data[k] * x[indices[k]];
+      if (s > 0) y[r] = s;
+    }
+    x = y;
+  }
+  let best = 0;
+  for (let m = 1; m < 4; m++) if (x[m] > x[best]) best = m;
+  return best;
+}
+
+const game = { body: [], food: 0, steps: 0, over: "", wins: 0 };
+
+function placeFood() {
+  const free = [];
+  for (let c = 0; c < CELLS; c++) if (!game.body.includes(c)) free.push(c);
+  game.food = free.length ? free[Math.floor(Math.random() * free.length)] : -1;
+}
+
+function reset() {
+  game.body = [Math.floor(Math.random() * CELLS)];
+  game.steps = 0;
+  game.over = "";
+  placeFood();
+  draw();
+}
+
+function step() {
+  if (game.over) return;
+  const head = game.body[0];
+  const m = decide(game.body, game.food);
+  const r = Math.floor(head / N) + MOVES[m][0], c = head % N + MOVES[m][1];
+  game.steps++;
+  if (r < 0 || r >= N || c < 0 || c >= N) { game.over = "Hit a wall"; return; }
+  const n = r * N + c, eating = n === game.food;
+  if (!eating) game.body.pop();
+  if (game.body.includes(n)) { game.over = "Hit itself"; return; }
+  game.body.unshift(n);
+  if (eating) {
+    placeFood();
+    if (game.food < 0) { game.over = "Perfect game: board full!"; game.wins++; }
+  }
+}
+
+const ctx = document.getElementById("board").getContext("2d");
+const S = 60;
+function cellCentre(c) { return [(c % N) * S + S / 2, Math.floor(c / N) * S + S / 2]; }
+
+function draw() {
+  ctx.clearRect(0, 0, 600, 600);
+  if (game.food >= 0) {
+    const [x, y] = cellCentre(game.food);
+    ctx.fillStyle = "#ff6b6b";
+    ctx.beginPath(); ctx.arc(x, y, S * 0.3, 0, 7); ctx.fill();
+  }
+  ctx.strokeStyle = "#3ddc97"; ctx.lineWidth = S * 0.62;
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath();
+  game.body.forEach((c, i) => { const [x, y] = cellCentre(c); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+  if (game.body.length === 1) ctx.lineTo(...cellCentre(game.body[0]));
+  ctx.stroke();
+  const [hx, hy] = cellCentre(game.body[0]);
+  ctx.fillStyle = "#c9ffe6";
+  ctx.beginPath(); ctx.arc(hx, hy, S * 0.34, 0, 7); ctx.fill();
+  document.getElementById("len").textContent = game.body.length;
+  document.getElementById("steps").textContent = game.steps;
+  document.getElementById("wins").textContent = game.wins;
+  document.getElementById("msg").textContent = game.over;
+}
+
+let last = 0, owed = 0;
+function loop(t) {
+  const speed = +document.getElementById("speed").value;
+  owed += Math.min(t - last, 100) * speed * speed / 1000;
+  last = t;
+  const stop = performance.now() + 12;  // keep the page smooth on slow phones
+  while (owed >= 1 && performance.now() < stop) { step(); owed--; }
+  owed = Math.min(owed, 2);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+document.getElementById("again").onclick = reset;
+window.snake = { game, step, reset };
+loadWeights().then(() => { reset(); requestAnimationFrame(loop); window.snake.ready = true; });
+</script>
+</body>
+</html>

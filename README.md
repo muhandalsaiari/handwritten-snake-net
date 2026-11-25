@@ -85,3 +85,7 @@ python build_v5.py
 python test_v5.py match 3
 python make_page_v5.py
 ```
+
+## License
+
+MIT, see `LICENSE`.
